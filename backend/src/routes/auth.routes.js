@@ -39,6 +39,9 @@ router.get('/google/callback', authController.googleCallback);
 router.get('/linkedin', passport.authenticate('linkedin'));
 router.get('/linkedin/callback', authController.linkedinCallback);
 
+// OAuth token callback
+router.post('/oauth/callback', authController.handleOAuthCallback);
+
 // Protected routes
 router.get('/me', protect, authController.getMe);
 router.post('/verify-email', protect, authController.verifyEmail);

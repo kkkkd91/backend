@@ -2,6 +2,7 @@ const User = require('../models/user.model');
 const tokenService = require('../services/token.service');
 const emailService = require('../services/email.service');
 const passport = require('passport');
+const jwt = require('jsonwebtoken');
 
 /**
  * Register a new user with email and password
@@ -427,7 +428,7 @@ exports.googleCallback = (req, res, next) => {
 
     // Redirect to frontend with tokens
     res.redirect(
-      `${process.env.FRONTEND_URL}/oauth-callback?accessToken=${accessToken}&refreshToken=${refreshToken}`
+      `${process.env.FRONTEND_URL}/auth/callback?token=${accessToken}`
     );
   })(req, res, next);
 };
@@ -453,7 +454,66 @@ exports.linkedinCallback = (req, res, next) => {
 
     // Redirect to frontend with tokens
     res.redirect(
-      `${process.env.FRONTEND_URL}/oauth-callback?accessToken=${accessToken}&refreshToken=${refreshToken}`
+      `${process.env.FRONTEND_URL}/auth/callback?token=${accessToken}`
     );
   })(req, res, next);
+};
+
+/**
+ * Handle OAuth callback with token
+ * @route POST /api/auth/oauth/callback
+ * @access Public
+ */
+exports.handleOAuthCallback = async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: 'No token provided'
+      });
+    }
+    
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Find user by ID
+    const user = await User.findById(decoded.id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Generate refresh token
+    const refreshToken = tokenService.generateRefreshToken(user._id);
+    
+    // Return user and tokens
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          emailVerified: user.emailVerified,
+          onboardingStatus: user.onboardingStatus,
+          onboardingStep: user.onboardingStep || 1
+        },
+        tokens: {
+          accessToken: token,
+          refreshToken
+        }
+      }
+    });
+  } catch (err) {
+    res.status(401).json({
+      success: false,
+      error: 'Invalid or expired token'
+    });
+  }
 }; 
