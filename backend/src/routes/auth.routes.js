@@ -31,6 +31,7 @@ router.post('/login', loginValidation, authController.login);
 router.post('/refresh-token', authController.refreshToken);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password/:token', resetPasswordValidation, authController.resetPassword);
+router.post('/check-email', authController.checkEmail);
 
 // OAuth routes
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
@@ -46,5 +47,6 @@ router.post('/oauth/callback', authController.handleOAuthCallback);
 router.get('/me', protect, authController.getMe);
 router.post('/verify-email', protect, authController.verifyEmail);
 router.post('/resend-verification', protect, authController.resendVerification);
+router.put('/complete-onboarding', protect, authController.completeOnboarding);
 
 module.exports = router; 

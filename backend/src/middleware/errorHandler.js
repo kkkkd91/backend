@@ -1,64 +1,45 @@
 /**
- * Error handling middleware
+ * Global error handler middleware
  */
 const errorHandler = (err, req, res, next) => {
-  let error = { ...err };
-  error.message = err.message;
+  console.error(err.stack);
 
-  console.error('Error:', {
-    name: err.name,
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
+  // Default error values
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Server Error';
 
-  // Mongoose validation error
+  // Handle specific error types
   if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map(val => val.message);
-    error = new Error(messages.join(', '));
+    // Mongoose validation error
     return res.status(400).json({
       success: false,
-      error: error.message || 'Validation Error'
+      error: err.message,
+      details: err.errors
     });
   }
 
-  // Mongoose duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    error = new Error(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`);
-    return res.status(400).json({
-      success: false,
-      error: error.message || 'Duplicate Field Value Entered'
-    });
-  }
-
-  // Mongoose bad ObjectId
   if (err.name === 'CastError') {
-    error = new Error(`Resource not found with id of ${err.value}`);
+    // Mongoose bad ObjectId error
     return res.status(404).json({
       success: false,
-      error: error.message || 'Resource not found'
+      error: 'Resource not found',
     });
   }
 
-  // JWT errors
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
+  if (err.code === 11000) {
+    // Mongoose duplicate key error
+    const field = Object.keys(err.keyValue)[0];
+    return res.status(400).json({
       success: false,
-      error: 'Invalid token'
+      error: `${field} already exists`,
     });
   }
 
-  if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      error: 'Token expired'
-    });
-  }
-
-  // Default response
-  res.status(error.statusCode || 500).json({
+  // Default error response
+  res.status(statusCode).json({
     success: false,
-    error: error.message || 'Server Error'
+    error: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
 };
 

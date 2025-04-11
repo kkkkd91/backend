@@ -1,95 +1,6 @@
 const Workspace = require('../models/workspace.model');
 const User = require('../models/user.model');
-const tokenService = require('../services/token.service');
-const emailService = require('../services/email.service');
-
-/**
- * Get all workspaces for current user
- * @route GET /api/workspaces
- * @access Private
- */
-exports.getWorkspaces = async (req, res, next) => {
-  try {
-    const userId = req.user._id;
-    
-    // Find all workspaces where user is owner or member
-    const workspaces = await Workspace.findWorkspacesForUser(userId);
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        workspaces: workspaces.map(workspace => ({
-          id: workspace._id,
-          name: workspace.name,
-          type: workspace.type,
-          isOwner: workspace.owner.toString() === userId.toString(),
-          createdAt: workspace.createdAt,
-          // Only include members count for team workspaces
-          membersCount: workspace.type === 'team' ? 
-            workspace.members.filter(m => m.inviteAccepted).length : 
-            undefined
-        }))
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Get workspace by ID
- * @route GET /api/workspaces/:workspaceId
- * @access Private
- */
-exports.getWorkspace = async (req, res, next) => {
-  try {
-    // Workspace is already attached to req by workspace access middleware
-    const workspace = req.workspace;
-    const userId = req.user._id;
-    
-    let workspaceData = {
-      id: workspace._id,
-      name: workspace.name,
-      type: workspace.type,
-      owner: workspace.owner,
-      isOwner: workspace.owner.toString() === userId.toString(),
-      createdAt: workspace.createdAt,
-      settings: workspace.settings
-    };
-    
-    // Only include members for team workspaces
-    if (workspace.type === 'team') {
-      // Get user details for each member
-      const memberIds = workspace.members.map(member => member.user);
-      const users = await User.find({ _id: { $in: memberIds } });
-      
-      const membersData = workspace.members.map(member => {
-        const userData = users.find(u => u._id.toString() === member.user.toString());
-        
-        return {
-          id: member._id,
-          userId: member.user,
-          name: userData ? `${userData.firstName} ${userData.lastName}` : 'Unknown User',
-          email: userData ? userData.email : 'unknown@email.com',
-          role: member.role,
-          inviteAccepted: member.inviteAccepted,
-          addedAt: member.createdAt
-        };
-      });
-      
-      workspaceData.members = membersData;
-    }
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        workspace: workspaceData
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+const { validationResult } = require('express-validator');
 
 /**
  * Create a new workspace
@@ -98,42 +9,52 @@ exports.getWorkspace = async (req, res, next) => {
  */
 exports.createWorkspace = async (req, res, next) => {
   try {
-    const { name, type } = req.body;
-    const userId = req.user._id;
-    
-    // Validate input
-    if (!name || !type) {
+    const { name, type, linkedInProfile, postFrequency, postStyle, inspirationProfiles } = req.body;
+
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        error: 'Name and type are required'
+        error: 'Validation failed',
+        details: errors.array(),
       });
     }
-    
-    if (!['individual', 'team'].includes(type)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid workspace type'
-      });
-    }
-    
+
     // Create workspace
     const workspace = await Workspace.create({
       name,
       type,
-      owner: userId
+      owner: req.user._id,
+      linkedInProfile,
+      postFrequency,
+      postStyle,
+      inspirationProfiles,
+      members: [
+        {
+          user: req.user._id,
+          role: 'admin',
+        },
+      ],
     });
-    
+
+    // Check if this is the user's first workspace and update onboarding status
+    if (req.user.onboardingStatus !== 'completed') {
+      const user = await User.findById(req.user._id);
+      user.onboardingStatus = 'completed';
+      await user.save();
+    }
+
+    // Return response
     res.status(201).json({
       success: true,
       data: {
-        workspace: {
-          id: workspace._id,
-          name: workspace.name,
-          type: workspace.type,
-          isOwner: true,
-          createdAt: workspace.createdAt
+        workspace,
+        user: {
+          onboardingStatus: req.user.onboardingStatus === 'completed' ? 
+            'completed' : 'incomplete'
         }
-      }
+      },
     });
   } catch (error) {
     next(error);
@@ -141,82 +62,27 @@ exports.createWorkspace = async (req, res, next) => {
 };
 
 /**
- * Update workspace
- * @route PUT /api/workspaces/:workspaceId
- * @access Private (Admin only)
+ * Get all workspaces for the current user
+ * @route GET /api/workspaces
+ * @access Private
  */
-exports.updateWorkspace = async (req, res, next) => {
+exports.getWorkspaces = async (req, res, next) => {
   try {
-    // Only workspace admins can update workspace
-    if (!req.isWorkspaceAdmin) {
-      return res.status(403).json({
-        success: false,
-        error: 'You do not have permission to update this workspace'
-      });
-    }
-    
-    const { name, settings } = req.body;
-    const workspaceId = req.workspace._id;
-    
-    // Validate input
-    if (!name && !settings) {
-      return res.status(400).json({
-        success: false,
-        error: 'Name or settings are required for update'
-      });
-    }
-    
-    // Prepare update object
-    const updateData = {};
-    if (name) updateData.name = name;
-    
-    if (settings) {
-      // Validate settings
-      if (settings.preferredTheme && !['light', 'dark'].includes(settings.preferredTheme)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid theme preference'
-        });
-      }
-      
-      if (settings.defaultPostStyle && 
-          !['standard', 'formatted', 'chunky', 'short', 'emojis'].includes(settings.defaultPostStyle)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid post style'
-        });
-      }
-      
-      if (settings.defaultLanguage && !['english', 'german'].includes(settings.defaultLanguage)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid language'
-        });
-      }
-      
-      // Update specific settings
-      if (settings.preferredTheme) updateData['settings.preferredTheme'] = settings.preferredTheme;
-      if (settings.defaultPostStyle) updateData['settings.defaultPostStyle'] = settings.defaultPostStyle;
-      if (settings.defaultLanguage) updateData['settings.defaultLanguage'] = settings.defaultLanguage;
-    }
-    
-    // Update workspace
-    const workspace = await Workspace.findByIdAndUpdate(
-      workspaceId,
-      updateData,
-      { new: true }
-    );
-    
+    // Find workspaces where user is owner or member
+    const workspaces = await Workspace.find({
+      $or: [
+        { owner: req.user._id },
+        { 'members.user': req.user._id },
+      ],
+    });
+
+    // Return response
     res.status(200).json({
       success: true,
       data: {
-        workspace: {
-          id: workspace._id,
-          name: workspace.name,
-          type: workspace.type,
-          settings: workspace.settings
-        }
-      }
+        workspaces,
+        count: workspaces.length,
+      },
     });
   } catch (error) {
     next(error);
@@ -224,178 +90,272 @@ exports.updateWorkspace = async (req, res, next) => {
 };
 
 /**
- * Delete workspace
- * @route DELETE /api/workspaces/:workspaceId
- * @access Private (Owner only)
+ * Get a single workspace by ID
+ * @route GET /api/workspaces/:id
+ * @access Private
  */
-exports.deleteWorkspace = async (req, res, next) => {
+exports.getWorkspace = async (req, res, next) => {
   try {
-    // Only workspace owner can delete workspace
-    if (!req.isWorkspaceOwner) {
-      return res.status(403).json({
-        success: false,
-        error: 'Only the workspace owner can delete a workspace'
-      });
-    }
-    
-    const workspaceId = req.workspace._id;
-    
-    // Delete workspace
-    await Workspace.findByIdAndDelete(workspaceId);
-    
-    res.status(200).json({
-      success: true,
-      data: null
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+    const workspace = await Workspace.findById(req.params.id);
 
-/**
- * Invite user to workspace
- * @route POST /api/workspaces/:workspaceId/invite
- * @access Private (Admin only)
- */
-exports.inviteUser = async (req, res, next) => {
-  try {
-    // Only workspace admins can invite users
-    if (!req.isWorkspaceAdmin) {
-      return res.status(403).json({
-        success: false,
-        error: 'You do not have permission to invite users to this workspace'
-      });
-    }
-    
-    const { email, role } = req.body;
-    const workspace = req.workspace;
-    const inviter = req.user;
-    
-    // Validate input
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email is required'
-      });
-    }
-    
-    if (!role || !['admin', 'writer', 'viewer'].includes(role)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Valid role is required (admin, writer, or viewer)'
-      });
-    }
-    
-    // Check if workspace is team type
-    if (workspace.type !== 'team') {
-      return res.status(400).json({
-        success: false,
-        error: 'Cannot invite users to individual workspace'
-      });
-    }
-    
-    // Check if user is already a member
-    const existingMember = workspace.members.find(
-      member => member.user.email === email || member.email === email
-    );
-    
-    if (existingMember) {
-      return res.status(400).json({
-        success: false,
-        error: 'User is already a member of this workspace'
-      });
-    }
-    
-    // Find the user by email
-    let user = await User.findOne({ email });
-    
-    // Generate invitation token
-    const inviteToken = tokenService.generateInviteToken();
-    
-    // Add member to workspace
-    const newMember = {
-      user: user ? user._id : null,
-      role,
-      inviteAccepted: false,
-      inviteToken,
-      addedBy: inviter._id
-    };
-    
-    workspace.members.push(newMember);
-    await workspace.save();
-    
-    // Send invitation email
-    await emailService.sendWorkspaceInvitation(
-      email,
-      inviteToken,
-      workspace.name,
-      `${inviter.firstName} ${inviter.lastName}`,
-      role
-    );
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        message: `Invitation sent to ${email}`
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Accept workspace invitation
- * @route POST /api/workspaces/invitations/:token/accept
- * @access Public
- */
-exports.acceptInvitation = async (req, res, next) => {
-  try {
-    const { token } = req.params;
-    
-    // Find workspace with this invitation token
-    const workspace = await Workspace.findOne({
-      'members.inviteToken': token
-    });
-    
     if (!workspace) {
       return res.status(404).json({
         success: false,
-        error: 'Invalid or expired invitation'
+        error: 'Workspace not found',
       });
     }
-    
-    // Find the invitation
-    const memberIndex = workspace.members.findIndex(
-      member => member.inviteToken === token
-    );
-    
-    if (memberIndex === -1) {
-      return res.status(404).json({
+
+    // Check if user has access to workspace
+    const hasAccess = workspace.owner.equals(req.user._id) || 
+                      workspace.members.some(member => member.user.equals(req.user._id));
+
+    if (!hasAccess) {
+      return res.status(403).json({
         success: false,
-        error: 'Invalid or expired invitation'
+        error: 'You do not have access to this workspace',
       });
     }
-    
-    // Update invitation
-    workspace.members[memberIndex].inviteAccepted = true;
-    workspace.members[memberIndex].inviteToken = undefined;
-    
-    // If user is logged in, associate with this invitation
-    if (req.user) {
-      workspace.members[memberIndex].user = req.user._id;
-    }
-    
-    await workspace.save();
-    
+
+    // Return response
     res.status(200).json({
       success: true,
       data: {
-        workspace: {
-          id: workspace._id,
-          name: workspace.name
-        }
-      }
+        workspace,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update a workspace
+ * @route PUT /api/workspaces/:id
+ * @access Private
+ */
+exports.updateWorkspace = async (req, res, next) => {
+  try {
+    const { name, linkedInProfile, postFrequency, postStyle, inspirationProfiles } = req.body;
+
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        details: errors.array(),
+      });
+    }
+
+    // Find workspace
+    let workspace = await Workspace.findById(req.params.id);
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    // Check if user is owner or admin
+    const isOwnerOrAdmin = workspace.owner.equals(req.user._id) || 
+                          workspace.members.some(member => 
+                            member.user.equals(req.user._id) && member.role === 'admin');
+
+    if (!isOwnerOrAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'You must be the owner or admin to update this workspace',
+      });
+    }
+
+    // Update workspace
+    if (name) workspace.name = name;
+    if (linkedInProfile) workspace.linkedInProfile = linkedInProfile;
+    if (postFrequency) workspace.postFrequency = postFrequency;
+    if (postStyle) workspace.postStyle = postStyle;
+    if (inspirationProfiles) workspace.inspirationProfiles = inspirationProfiles;
+
+    await workspace.save();
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      data: {
+        workspace,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a workspace
+ * @route DELETE /api/workspaces/:id
+ * @access Private
+ */
+exports.deleteWorkspace = async (req, res, next) => {
+  try {
+    // Find workspace
+    const workspace = await Workspace.findById(req.params.id);
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    // Check if user is owner
+    if (!workspace.owner.equals(req.user._id)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Only the workspace owner can delete it',
+      });
+    }
+
+    // Delete workspace
+    await Workspace.deleteOne({ _id: workspace._id });
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      data: {},
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add a member to a workspace
+ * @route POST /api/workspaces/:id/members
+ * @access Private
+ */
+exports.addMember = async (req, res, next) => {
+  try {
+    const { email, role } = req.body;
+
+    if (!email || !role) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and role are required',
+      });
+    }
+
+    // Find workspace
+    const workspace = await Workspace.findById(req.params.id);
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    // Check if user is owner or admin
+    const isOwnerOrAdmin = workspace.owner.equals(req.user._id) || 
+                          workspace.members.some(member => 
+                            member.user.equals(req.user._id) && member.role === 'admin');
+
+    if (!isOwnerOrAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'You must be the owner or admin to add members',
+      });
+    }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found',
+      });
+    }
+
+    // Check if user is already a member
+    const isMember = workspace.members.some(member => member.user.equals(user._id));
+    
+    if (isMember) {
+      return res.status(400).json({
+        success: false,
+        error: 'User is already a member of this workspace',
+      });
+    }
+
+    // Add user to workspace
+    workspace.members.push({
+      user: user._id,
+      role: role,
+    });
+
+    await workspace.save();
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      data: {
+        workspace,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Remove a member from a workspace
+ * @route DELETE /api/workspaces/:id/members/:userId
+ * @access Private
+ */
+exports.removeMember = async (req, res, next) => {
+  try {
+    // Find workspace
+    const workspace = await Workspace.findById(req.params.id);
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    // Check if user is owner or admin
+    const isOwnerOrAdmin = workspace.owner.equals(req.user._id) || 
+                          workspace.members.some(member => 
+                            member.user.equals(req.user._id) && member.role === 'admin');
+
+    if (!isOwnerOrAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'You must be the owner or admin to remove members',
+      });
+    }
+
+    // Check if trying to remove owner
+    if (workspace.owner.equals(req.params.userId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot remove the workspace owner',
+      });
+    }
+
+    // Remove member
+    workspace.members = workspace.members.filter(
+      member => !member.user.equals(req.params.userId)
+    );
+
+    await workspace.save();
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      data: {
+        workspace,
+      },
     });
   } catch (error) {
     next(error);

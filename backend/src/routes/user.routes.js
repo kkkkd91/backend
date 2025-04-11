@@ -1,23 +1,37 @@
 const express = require('express');
 const { check } = require('express-validator');
-const onboardingController = require('../controllers/onboarding.controller');
-const { protect } = require('../middleware/auth');
+const userController = require('../controllers/user.controller');
+const { protect, restrictToVerified } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Update profile validation middleware
+const updateProfileValidation = [
+  check('firstName', 'First name cannot be empty if provided').optional().not().isEmpty(),
+  check('lastName', 'Last name cannot be empty if provided').optional().not().isEmpty(),
+];
 
 // All routes require authentication
 router.use(protect);
 
+// User profile routes
+router.put(
+  '/profile',
+  updateProfileValidation,
+  userController.updateProfile
+);
+
+// Password routes
+router.put(
+  '/password',
+  [check('newPassword', 'New password must be at least 8 characters').isLength({ min: 8 })],
+  userController.updatePassword
+);
+
 // Onboarding routes
-router.put('/onboarding/step', onboardingController.updateOnboardingStep);
-router.put('/onboarding/workspace-type', onboardingController.updateWorkspaceType);
-router.put('/onboarding/preferred-theme', onboardingController.updatePreferredTheme);
-router.put('/onboarding/post-style', onboardingController.updatePostStyle);
-router.put('/onboarding/post-frequency', onboardingController.updatePostFrequency);
-router.put('/onboarding/language', onboardingController.updateLanguage);
-router.put('/onboarding/user-info', onboardingController.updateUserInfo);
-router.put('/onboarding/website-link', onboardingController.updateWebsiteLink);
-router.put('/onboarding/inspiration-profiles', onboardingController.updateInspirationProfiles);
-router.post('/onboarding/complete', onboardingController.completeOnboarding);
+router.put(
+  '/onboarding',
+  userController.updateOnboarding
+);
 
 module.exports = router; 

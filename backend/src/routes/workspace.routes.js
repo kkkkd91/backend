@@ -1,44 +1,66 @@
 const express = require('express');
 const { check } = require('express-validator');
 const workspaceController = require('../controllers/workspace.controller');
-const { protect, workspaceAccess, requireWorkspaceAdmin } = require('../middleware/auth');
+const { protect, restrictToVerified, checkOnboarding } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Workspace validation middleware
+const workspaceValidation = [
+  check('name', 'Workspace name is required').not().isEmpty(),
+  check('type', 'Workspace type is required').isIn(['personal', 'business', 'agency']),
+];
 
 // All routes require authentication
 router.use(protect);
 
-// Get all workspaces for current user
-router.get('/', workspaceController.getWorkspaces);
+// Most routes require email verification
+router.use(restrictToVerified);
 
-// Create a new workspace
+// Create workspace
 router.post(
   '/',
-  [
-    check('name', 'Workspace name is required').notEmpty(),
-    check('type', 'Workspace type is required').isIn(['individual', 'team'])
-  ],
+  workspaceValidation,
   workspaceController.createWorkspace
 );
 
-// Routes that require workspace access
-router.get('/:workspaceId', workspaceAccess, workspaceController.getWorkspace);
-router.put('/:workspaceId', [workspaceAccess, requireWorkspaceAdmin], workspaceController.updateWorkspace);
-router.delete('/:workspaceId', workspaceAccess, workspaceController.deleteWorkspace);
-
-// Workspace invitation routes
-router.post(
-  '/:workspaceId/invite',
-  [
-    workspaceAccess,
-    requireWorkspaceAdmin,
-    check('email', 'Valid email is required').isEmail(),
-    check('role', 'Valid role is required').isIn(['admin', 'writer', 'viewer'])
-  ],
-  workspaceController.inviteUser
+// Get all workspaces
+router.get(
+  '/',
+  workspaceController.getWorkspaces
 );
 
-// Accept workspace invitation - doesn't require authentication
-router.post('/invitations/:token/accept', workspaceController.acceptInvitation);
+// Get single workspace
+router.get(
+  '/:id',
+  workspaceController.getWorkspace
+);
+
+// Update workspace
+router.put(
+  '/:id',
+  workspaceController.updateWorkspace
+);
+
+// Delete workspace
+router.delete(
+  '/:id',
+  workspaceController.deleteWorkspace
+);
+
+// Workspace members
+router.post(
+  '/:id/members',
+  [
+    check('email', 'Valid email is required').isEmail(),
+    check('role', 'Role must be admin, editor, or viewer').isIn(['admin', 'editor', 'viewer']),
+  ],
+  workspaceController.addMember
+);
+
+router.delete(
+  '/:id/members/:userId',
+  workspaceController.removeMember
+);
 
 module.exports = router; 

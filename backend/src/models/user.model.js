@@ -17,40 +17,46 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Email is required'],
       unique: true,
-      trim: true,
       lowercase: true,
-      match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please provide a valid email'],
+      trim: true,
+      match: [/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/, 'Please provide a valid email'],
     },
     password: {
       type: String,
       minlength: [8, 'Password must be at least 8 characters'],
       select: false, // Don't return password by default
     },
-    googleId: {
-      type: String,
-      unique: true,
-      sparse: true, // Allow null values and still enforce uniqueness
+    emailVerified: {
+      type: Boolean,
+      default: false,
     },
-    linkedinId: {
+    verificationCode: {
       type: String,
-      unique: true,
-      sparse: true, // Allow null values and still enforce uniqueness
+      select: false,
+    },
+    verificationExpires: {
+      type: Date,
+      select: false,
+    },
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      select: false,
     },
     mobileNumber: {
       type: String,
       trim: true,
     },
-    emailVerified: {
-      type: Boolean,
-      default: false,
-    },
-    emailVerificationCode: {
+    googleId: {
       type: String,
-      select: false, // Don't return by default
+      sparse: true,
     },
-    emailVerificationExpires: {
-      type: Date,
-      select: false, // Don't return by default
+    linkedinId: {
+      type: String,
+      sparse: true,
     },
     onboardingStatus: {
       type: String,
@@ -61,51 +67,9 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
-    onboardingData: {
-      workspaceType: {
-        type: String,
-        enum: ['team', 'individual', null],
-        default: null,
-      },
-      preferredTheme: {
-        type: String,
-        enum: ['light', 'dark', null],
-        default: null,
-      },
-      postStyle: {
-        type: String,
-        enum: ['standard', 'formatted', 'chunky', 'short', 'emojis', null],
-        default: null,
-      },
-      postFrequency: {
-        type: Number,
-        default: null,
-      },
-      language: {
-        type: String,
-        enum: ['english', 'german', null],
-        default: null,
-      },
-      websiteLink: {
-        type: String,
-        default: '',
-      },
-      inspirationProfiles: {
-        type: [String],
-        default: [],
-      },
-    },
-    resetPasswordToken: {
-      type: String,
-      select: false, // Don't return by default
-    },
-    resetPasswordExpires: {
-      type: Date,
-      select: false, // Don't return by default
-    },
-    lastLoginAt: {
-      type: Date,
-      default: null,
+    preferences: {
+      type: Object,
+      default: {},
     },
   },
   {
@@ -113,17 +77,16 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Pre-save middleware to hash password
-userSchema.pre('save', async function (next) {
+// Hash password before saving
+userSchema.pre('save', async function(next) {
   // Only hash the password if it's modified or new
   if (!this.isModified('password') || !this.password) {
     return next();
   }
-
+  
   try {
-    // Generate salt
+    // Generate salt and hash password
     const salt = await bcrypt.genSalt(10);
-    // Hash password
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
@@ -131,20 +94,20 @@ userSchema.pre('save', async function (next) {
   }
 });
 
-// Method to compare passwords
-userSchema.methods.comparePassword = async function (candidatePassword) {
+// Compare password method
+userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Method to get full name
-userSchema.methods.getFullName = function () {
+// Get full name
+userSchema.virtual('fullName').get(function() {
   return `${this.firstName} ${this.lastName}`;
-};
+});
 
-// Static method to find user by email
-userSchema.statics.findByEmail = function (email) {
-  return this.findOne({ email: email.toLowerCase() });
-};
+// Set password check (bypassed for OAuth users)
+userSchema.virtual('hasPassword').get(function() {
+  return Boolean(this.password);
+});
 
 const User = mongoose.model('User', userSchema);
 

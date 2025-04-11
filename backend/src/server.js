@@ -12,6 +12,7 @@ const errorHandler = require('./middleware/errorHandler');
 const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const workspaceRoutes = require('./routes/workspace.routes');
+const onboardingRoutes = require('./routes/onboarding.routes');
 
 // Initialize app
 const app = express();
@@ -25,7 +26,6 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:5173',
   'http://localhost:8080',
-  'https://capable-rabanadas-5d3401.netlify.app',
   'https://rococo-malabi-1b46e9.netlify.app'
 ];
 
@@ -57,6 +57,7 @@ app.use(passport.initialize());
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/workspaces', workspaceRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 // Health check route
 app.get('/api/health', (req, res) => {
