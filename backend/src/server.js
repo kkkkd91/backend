@@ -25,7 +25,8 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:5173',
   'http://localhost:8080',
-  'https://capable-rabanadas-5d3401.netlify.app'
+  'https://capable-rabanadas-5d3401.netlify.app',
+  'https://rococo-malabi-1b46e9.netlify.app'
 ];
 
 // Middleware
